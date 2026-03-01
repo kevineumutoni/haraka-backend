@@ -24,8 +24,8 @@ from .serializers import (
 from .permissions import IsAdmin
 import threading
 import requests
-from dotenv import load_dotenv  # 👈 Add this
-load_dotenv()                   # 👈 And this
+from dotenv import load_dotenv
+load_dotenv()
 from django.utils import timezone
 from datetime import timedelta
 from rest_framework.views import APIView
@@ -38,7 +38,7 @@ import pandas as pd
 from docx import Document
 
 ZEN_AGENT_API_URL = os.environ.get("ZEN_AGENT_API_URL")
-MAX_CONVERSATIONS_PER_DAY = 5
+MAX_CONVERSATIONS_PER_DAY = 6
 MAX_RUNS_PER_CONVERSATION_PER_DAY = 20
 
 
@@ -59,12 +59,14 @@ def determine_file_type(file_obj):
         return 'word'
     elif file_name.endswith(".txt") or content_type.startswith("text/"):
         return 'text'
-    return 'text' 
+    return 'text'
+
 
 def extract_text_from_file(file_obj):
     """Extract text from PDF, image, CSV, Excel, Word, or plain text."""
+    tmp_path = None
     try:
-        if file_obj.size > 50 * 2024 * 2024:  
+        if file_obj.size > 50 * 2024 * 2024:
             return "[File too large for processing]"
 
         file_name = file_obj.name.lower()
@@ -77,32 +79,26 @@ def extract_text_from_file(file_obj):
 
         text = ""
 
-        
         if content_type == "application/pdf" or file_name.endswith(".pdf"):
             reader = PdfReader(tmp_path)
             text = "\n".join(page.extract_text() or "" for page in reader.pages)
 
-       
         elif content_type.startswith("image/") or file_name.endswith((".png", ".jpg", ".jpeg")):
             image = Image.open(tmp_path)
             text = pytesseract.image_to_string(image)
 
-        
         elif file_name.endswith(".csv"):
             df = pd.read_csv(tmp_path)
             text = df.to_string(index=False)
 
-        
         elif file_name.endswith((".xlsx", ".xls", ".xlsm")):
             df = pd.read_excel(tmp_path)
             text = df.to_string(index=False)
 
-  
         elif file_name.endswith((".docx", ".doc")):
             doc = Document(tmp_path)
             text = "\n".join(paragraph.text for paragraph in doc.paragraphs)
 
-    
         elif file_name.endswith(".txt") or content_type.startswith("text/"):
             with open(tmp_path, "r", encoding="utf-8", errors="ignore") as f:
                 text = f.read()
@@ -111,16 +107,18 @@ def extract_text_from_file(file_obj):
             return f"[Unsupported file type: {file_name}]"
 
         os.unlink(tmp_path)
-        return text.strip()[:5000]  
+        return text.strip()[:5000]
 
     except Exception as e:
-        if os.path.exists(tmp_path):
+        if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
         return f"[Extraction failed: {str(e)}]"
+
 
 class ConversationViewSet(viewsets.ModelViewSet):
     serializer_class = ConversationSerializer
     permission_classes = [IsAuthenticated]
+
     def create(self, request, *args, **kwargs):
         user = request.user
         since = timezone.now() - timedelta(days=1)
@@ -159,6 +157,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
 class RegisterView(viewsets.ViewSet):
     permission_classes = [permissions.AllowAny]
+
     def create(self, request):
         serializer = UserSerializer(data=request.data)
         if serializer.is_valid():
@@ -174,6 +173,7 @@ class RegisterView(viewsets.ViewSet):
 
 class LoginView(viewsets.ViewSet):
     permission_classes = [permissions.AllowAny]
+
     @action(detail=False, methods=['post'])
     def login(self, request):
         email = request.data.get('email')
@@ -200,6 +200,7 @@ class LoginView(viewsets.ViewSet):
 
 class LogoutView(viewsets.ViewSet):
     permission_classes = [permissions.IsAuthenticated]
+
     @action(detail=False, methods=['post'])
     def logout(self, request):
         try:
@@ -212,24 +213,31 @@ class LogoutView(viewsets.ViewSet):
 class ReviewViewSet(viewsets.ModelViewSet):
     serializer_class = ReviewSerializer
     permission_classes = [permissions.IsAuthenticated]
+
     def get_queryset(self):
         user = self.request.user
         if user.role.lower() == "admin":
             return Review.objects.all()
         else:
             return Review.objects.filter(user=user)
+
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+
     def destroy(self, request, *args, **kwargs):
         user = request.user
         if user.role.lower() != "admin":
-            return Response({"error": "You do not have permission to delete reviews"}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"error": "You do not have permission to delete reviews"},
+                status=status.HTTP_403_FORBIDDEN
+            )
         return super().destroy(request, *args, **kwargs)
 
 
 class UserViewSet(viewsets.ModelViewSet):
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
+
     def get_queryset(self):
         user = self.request.user
         role = getattr(user, 'role', '').lower()
@@ -239,6 +247,7 @@ class UserViewSet(viewsets.ModelViewSet):
             return User.objects.filter(id=user.id)
         else:
             return User.objects.none()
+
     def perform_update(self, serializer):
         user = self.request.user
         role = getattr(user, 'role', '').lower()
@@ -246,6 +255,7 @@ class UserViewSet(viewsets.ModelViewSet):
             serializer.save()
         else:
             raise PermissionDenied({"error": "You do not have permission to update this user."})
+
     def perform_destroy(self, instance):
         user = self.request.user
         role = getattr(user, 'role', '').lower()
@@ -253,6 +263,7 @@ class UserViewSet(viewsets.ModelViewSet):
             instance.delete()
         else:
             raise PermissionDenied({"error": "You do not have permission to delete this user."})
+
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def me(self, request):
         serializer = self.get_serializer(request.user)
@@ -275,6 +286,7 @@ class ToolViewSet(viewsets.ModelViewSet):
 class StepViewSet(viewsets.ModelViewSet):
     serializer_class = StepSerializer
     permission_classes = [IsAuthenticated]
+
     def get_queryset(self):
         user = self.request.user
         if user.role.lower() == "admin":
@@ -283,12 +295,18 @@ class StepViewSet(viewsets.ModelViewSet):
             return Step.objects.filter(
                 conversation__user=user
             ).select_related('conversation', 'tool', 'agent')
+
     @action(detail=False, methods=['get'])
     def by_conversation(self, request):
         conversation_id = request.query_params.get('conversation_id')
         if not conversation_id:
-            return Response({"error": "conversation_id is required"}, status=status.HTTP_400_BAD_REQUEST)
-        steps = self.get_queryset().filter(conversation_id=conversation_id).order_by('step_order')
+            return Response(
+                {"error": "conversation_id is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        steps = self.get_queryset().filter(
+            conversation_id=conversation_id
+        ).order_by('step_order')
         serializer = self.get_serializer(steps, many=True)
         return Response(serializer.data)
 
@@ -324,14 +342,22 @@ class RunViewSet(viewsets.ModelViewSet):
                 conversation = Conversation.objects.get(conversation_id=conversation_id)
                 if conversation.user:
                     if not request.user.is_authenticated:
-                        return Response({'error': 'Login required to use this conversation'}, status=status.HTTP_403_FORBIDDEN)
+                        return Response(
+                            {'error': 'Login required to use this conversation'},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
                     if conversation.user != request.user:
-                        return Response({'error': 'Not allowed to use this conversation'}, status=status.HTTP_403_FORBIDDEN)
+                        return Response(
+                            {'error': 'Not allowed to use this conversation'},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
             except Conversation.DoesNotExist:
                 return Response({'error': 'Conversation not found'}, status=404)
 
             since = timezone.now() - timedelta(days=1)
-            runs_count = Run.objects.filter(conversation=conversation, started_at__gte=since).count()
+            runs_count = Run.objects.filter(
+                conversation=conversation, started_at__gte=since
+            ).count()
             if runs_count >= MAX_RUNS_PER_CONVERSATION_PER_DAY:
                 return Response(
                     {'error': f'Run limit ({MAX_RUNS_PER_CONVERSATION_PER_DAY}) for this conversation per day exceeded.'},
@@ -346,11 +372,7 @@ class RunViewSet(viewsets.ModelViewSet):
 
         for file in uploaded_files:
             file_type = determine_file_type(file)
-            RunInputFile.objects.create(
-                run=run,
-                file=file,
-                file_type=file_type
-            )
+            RunInputFile.objects.create(run=run, file=file, file_type=file_type)
 
         if file_context:
             run.final_output = f"__FILE_CONTEXT__:{file_context}"
@@ -386,6 +408,7 @@ class RunViewSet(viewsets.ModelViewSet):
             run.status = Run.RUNNING
             run.save(update_fields=['status'])
 
+            # ── Extract file context if stored ──────────────────────────────
             file_context = None
             if run.final_output and run.final_output.startswith("__FILE_CONTEXT__:"):
                 file_context = run.final_output[len("__FILE_CONTEXT__:"):]
@@ -396,11 +419,12 @@ class RunViewSet(viewsets.ModelViewSet):
             if file_context:
                 payload["file_context"] = file_context
 
+            # ── Call FastAPI agent ───────────────────────────────────────────
             try:
                 response = requests.post(
                     ZEN_AGENT_API_URL,
                     json=payload,
-                    timeout=30
+                    timeout=180  # raised from 30s — scenario+web search needs 60-120s
                 )
                 response.raise_for_status()
                 result = response.json()
@@ -411,42 +435,58 @@ class RunViewSet(viewsets.ModelViewSet):
                 return
 
             query_type = result.get("type", "rag")
-        
-            if query_type == "forecast":
-                forecast_display = result.get("forecast_display", "Forecast data unavailable")
-                interpretation = result.get("interpretation", "No interpretation available")
-                confidence_level = result.get("confidence_level", "Medium")
-                data_points = result.get("data_points_used", 0)
-            
-                agent_response = (
-                    f"{interpretation}\n\n"
-                    f"FORECAST SUMMARY:\n"
-                    f"{forecast_display}\n"
-                    f"Confidence Level: {confidence_level} ({data_points} data points used)"
-                )
-            
-                dual_forecast = result.get("dual_forecast", {})
-                if dual_forecast:
-                    RunOutputArtifact.objects.create(
-                        run=run,
-                        artifact_type="json",
-                        data={"dual_forecast": dual_forecast},
-                        title="Detailed Forecast Data"
-                    )
-                
-            elif query_type == "scenario":
-                agent_response = result.get("llm_analysis", "No scenario analysis available.")
-            
-            elif query_type == "comparative":
-                agent_response = result.get("response", "No comparative analysis available.")
-            
-            elif query_type == "file_analysis" or query_type == "file_query":
-                agent_response = result.get("response", "No response received.")
-            
-            else:
-                agent_response = result.get("response", "No response received.")
 
-            # === NEW: Save artifacts from agent response ===
+            # ── Extract agent_response ───────────────────────────────────────
+            # Priority 1: final_output set by normalize_response() in agent.py
+            agent_response = (result.get("final_output") or "").strip()
+
+            # Priority 2: legacy field names per type (backward compat)
+            if not agent_response:
+                if query_type == "forecast":
+                    forecast_display = result.get("forecast_display", "")
+                    interpretation = result.get("interpretation", "")
+                    confidence_level = result.get("confidence_level", "Medium")
+                    data_points = result.get("data_points_used", 0)
+                    parts = []
+                    if interpretation:
+                        parts.append(interpretation)
+                    if forecast_display:
+                        parts.append(f"FORECAST SUMMARY:\n{forecast_display}")
+                    if confidence_level:
+                        parts.append(
+                            f"Confidence Level: {confidence_level} ({data_points} data points used)"
+                        )
+                    agent_response = "\n\n".join(parts) if parts else "Forecast data unavailable."
+
+                elif query_type == "scenario":
+                    agent_response = (
+                        result.get("llm_analysis")
+                        or result.get("response")
+                        or "No scenario analysis available."
+                    )
+
+                elif query_type == "comparative":
+                    agent_response = (
+                        result.get("response")
+                        or result.get("llm_analysis")
+                        or "No comparative analysis available."
+                    )
+
+                elif query_type in ("file_analysis", "file_query"):
+                    agent_response = result.get("response", "No response received.")
+
+                else:
+                    agent_response = (
+                        result.get("response")
+                        or result.get("llm_analysis")
+                        or "No response received."
+                    )
+
+            # Priority 3: absolute fallback
+            if not agent_response:
+                agent_response = "Dr. Zeno could not generate a response. Please try again."
+
+            # ── Save chart artifacts ─────────────────────────────────────────
             artifacts = result.get("artifacts", [])
             for artifact in artifacts:
                 RunOutputArtifact.objects.create(
@@ -456,6 +496,17 @@ class RunViewSet(viewsets.ModelViewSet):
                     title=artifact.get("title", "Chart")
                 )
 
+            # Save dual_forecast as chart artifact if present
+            dual_forecast = result.get("dual_forecast", {})
+            if dual_forecast:
+                RunOutputArtifact.objects.create(
+                    run=run,
+                    artifact_type="chart",
+                    data={"dual_forecast": dual_forecast},
+                    title="Detailed Forecast Data"
+                )
+
+            # ── Save other artifacts ─────────────────────────────────────────
             graph_url = result.get("graph_url")
             thought_process = result.get("thought_process", [])
             followup = result.get("followup")
@@ -482,26 +533,48 @@ class RunViewSet(viewsets.ModelViewSet):
                     title="Follow-up Suggestion"
                 )
 
+            # ── Complete the run ─────────────────────────────────────────────
             run.final_output = agent_response
             run.status = Run.COMPLETED
-            run.save(update_fields=['status', 'final_output'])
+            run.completed_at = timezone.now()
+            run.save(update_fields=['status', 'final_output', 'completed_at'])
 
         except Run.DoesNotExist:
             pass
+        except Exception as e:
+            # Catch any unexpected error so the run never stays stuck in RUNNING
+            try:
+                run = Run.objects.get(id=run_id)
+                run.status = Run.FAILED
+                run.final_output = f"Unexpected processing error: {str(e)}"
+                run.save(update_fields=['status', 'final_output'])
+            except Exception:
+                pass
+
     def destroy(self, request, *args, **kwargs):
         pk = kwargs.get('pk')
         try:
             run = Run.objects.get(id=pk)
         except Run.DoesNotExist:
-            return Response({'error': 'Run not found'}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {'error': 'Run not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
         user = request.user
         is_admin = getattr(user, 'role', '').lower() == 'admin'
         is_owner = run.conversation and run.conversation.user == user
         if is_admin or is_owner:
             run.delete()
-            return Response({'message': 'Run deleted successfully'}, status=status.HTTP_200_OK)
+            return Response(
+                {'message': 'Run deleted successfully'},
+                status=status.HTTP_200_OK
+            )
         else:
-            return Response({'error': 'You do not have permission to delete this run.'}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {'error': 'You do not have permission to delete this run.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
 
 class PasswordResetRequestView(APIView):
     permission_classes = [AllowAny]
@@ -513,7 +586,10 @@ class PasswordResetRequestView(APIView):
             try:
                 user = User.objects.get(email=email, is_active=True)
             except User.DoesNotExist:
-                return Response({'error': 'User not found.'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {'error': 'User not found.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             uid = urlsafe_base64_encode(force_bytes(user.pk))
             token = default_token_generator.make_token(user)
             reset_link = f"{settings.FRONTEND_URL}/reset/{uid}/{token}/"
@@ -527,6 +603,7 @@ class PasswordResetRequestView(APIView):
             return Response({'message': 'Reset link sent.'}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
 class PasswordResetConfirmView(APIView):
     permission_classes = [AllowAny]
 
@@ -534,5 +611,8 @@ class PasswordResetConfirmView(APIView):
         serializer = PasswordResetConfirmSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
-            return Response({'message': 'Password reset successful.'}, status=status.HTTP_200_OK)
+            return Response(
+                {'message': 'Password reset successful.'},
+                status=status.HTTP_200_OK
+            )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
