@@ -3,9 +3,17 @@ from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, Permis
 from django.core.exceptions import ValidationError
 
 def validate_gmail_domain(value):
-    if not (value.endswith('@gmail.com') or value.endswith('@gmail.io')):
-        raise ValidationError('Email must end with @gmail.com or @gmail.io')
-
+    allowed_domains = (
+        '@gmail.com',
+        '@gmail.io',
+        '@alueducation.com',
+        '@alustudent.com'
+    )
+    
+    if not any(value.endswith(domain) for domain in allowed_domains):
+        domains_str = ', '.join(allowed_domains)
+        raise ValidationError(f'Email must end with one of: {domains_str}')
+        
 class UserManager(BaseUserManager):
     def create_user(self, email, first_name, last_name, role="User", password=None, **extra_fields):
         if not email:
